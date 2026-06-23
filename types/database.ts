@@ -58,6 +58,7 @@ export type Database = {
           name: string;
           unit: "m2" | "fm" | "db";
           sort_order: number;
+          default_anticondens: boolean;
           created_at: string;
         };
         Insert: {
@@ -65,11 +66,13 @@ export type Database = {
           name: string;
           unit: "m2" | "fm" | "db";
           sort_order?: number;
+          default_anticondens?: boolean;
         };
         Update: {
           name?: string;
           unit?: "m2" | "fm" | "db";
           sort_order?: number;
+          default_anticondens?: boolean;
         };
         Relationships: [];
       };
@@ -264,6 +267,8 @@ export type Database = {
           unit_price_override: number | null;
           discount_percent: number;
           color_code: string | null;
+          with_anticondens: boolean;
+          anticondens_price: number;
           created_at: string;
         };
         Insert: {
@@ -280,6 +285,8 @@ export type Database = {
           unit_price_override?: number | null;
           discount_percent?: number;
           color_code?: string | null;
+          with_anticondens?: boolean;
+          anticondens_price?: number;
         };
         Update: {
           sort_order?: number;
@@ -293,6 +300,8 @@ export type Database = {
           unit_price_override?: number | null;
           discount_percent?: number;
           color_code?: string | null;
+          with_anticondens?: boolean;
+          anticondens_price?: number;
         };
         Relationships: [
           {

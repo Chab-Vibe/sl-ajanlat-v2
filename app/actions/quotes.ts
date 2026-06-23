@@ -57,6 +57,8 @@ export async function createQuote(data: QuoteFormData, saveOnly: boolean = true)
         unit_price_override: item.unit_price_override,
         discount_percent: item.discount_percent,
         color_code: item.color_code || null,
+        with_anticondens: row.with_anticondens,
+        anticondens_price: item.anticondens_price,
       }))
     );
 
@@ -114,6 +116,8 @@ export async function updateQuote(
         unit_price_override: item.unit_price_override,
         discount_percent: item.discount_percent,
         color_code: item.color_code || null,
+        with_anticondens: row.with_anticondens,
+        anticondens_price: item.anticondens_price,
       }))
     );
 

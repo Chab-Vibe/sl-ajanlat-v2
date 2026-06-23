@@ -40,6 +40,7 @@ export type QuoteFormData = {
 export type QuoteItemQuantityRow = {
   piece_count: number | null;
   quantity: number;
+  with_anticondens: boolean;
 };
 
 export type QuoteItemFormData = {
@@ -54,4 +55,5 @@ export type QuoteItemFormData = {
   discount_percent: number;
   color_code: string | null;
   sort_order: number;
+  anticondens_price: number;
 };

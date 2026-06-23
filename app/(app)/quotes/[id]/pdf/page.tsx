@@ -49,6 +49,8 @@ export default async function QuotePdfPage({
     custom_description: string | null;
     color_code: string | null;
     sort_order: number;
+    with_anticondens: boolean;
+    anticondens_price: number;
     product: {
       name: string;
       full_width: number | null;
@@ -63,56 +65,60 @@ export default async function QuotePdfPage({
 
   const getLabel = (item: (typeof items)[0]) => {
     if (item.custom_description) return item.custom_description;
-    return [
-      item.product?.category?.name,
+    const parts = [
       item.product?.name,
       item.product?.thickness,
       item.color_code ?? item.variant?.color_code ?? item.variant?.palette?.name,
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    ].filter(Boolean) as string[];
+    if (item.with_anticondens) parts.push("filccel");
+    return parts.join(" · ");
   };
 
-  // Group consecutive items with same product+variant+color into display groups
-  type QtyRow = { piece_count: number | null; quantity: number };
-  type Group = {
-    label: string;
-    unit: string;
-    full_width: number | null;
-    unit_price: number;
-    eff_discount: number;
-    rows: QtyRow[];
-    group_total: number;
-  };
-
-  const groups: Group[] = [];
-  for (const item of items) {
-    const effectivePrice = item.unit_price_override ?? item.unit_price_base;
+  // Flat rows — no grouping
+  const rows = items.map((item) => {
+    const anticondensAddon = item.with_anticondens ? (item.anticondens_price ?? 0) : 0;
+    const effectivePrice = (item.unit_price_override ?? item.unit_price_base) + anticondensAddon;
     const effDiscount = calcEffectiveDiscount(item.discount_percent, quote.global_discount);
-    const rowTotal = calcLineTotal(item.quantity, item.product?.full_width ?? null, effectivePrice, effDiscount, item.unit, item.piece_count);
-    const last = groups[groups.length - 1];
-    const sameGroup =
-      last &&
-      last.label === getLabel(item) &&
-      last.unit === item.unit &&
-      last.unit_price === effectivePrice;
-    if (sameGroup) {
-      last.rows.push({ piece_count: item.piece_count, quantity: item.quantity });
-      last.group_total += rowTotal;
-    } else {
-      groups.push({
-        label: getLabel(item),
-        unit: item.unit,
-        full_width: item.product?.full_width ?? null,
-        unit_price: effectivePrice,
-        eff_discount: effDiscount,
-        rows: [{ piece_count: item.piece_count, quantity: item.quantity }],
-        group_total: rowTotal,
-      });
-    }
-  }
+    const lineTotal = calcLineTotal(
+      item.quantity,
+      item.product?.full_width ?? null,
+      effectivePrice,
+      effDiscount,
+      item.unit,
+      item.piece_count,
+    );
+    const listTotal = calcLineTotal(
+      item.quantity,
+      item.product?.full_width ?? null,
+      effectivePrice,
+      0,
+      item.unit,
+      item.piece_count,
+    );
+    const isM2 = item.unit === "m2";
+    const isFm = item.unit === "fm";
+    const hasPieces = (isM2 || isFm) && item.piece_count != null;
+    const fm = hasPieces ? item.piece_count! * item.quantity : null;
+    const m2 = isM2 && fm != null && item.product?.full_width
+      ? fm * item.product.full_width
+      : null;
 
-  const netTotal = groups.reduce((s, g) => s + g.group_total, 0);
+    let qtyLabel: string;
+    if (hasPieces) {
+      qtyLabel = `${item.piece_count} db × ${item.quantity.toFixed(2)} fm`;
+      if (m2 != null) qtyLabel += ` = ${m2.toFixed(2)} m²`;
+      else if (fm != null) qtyLabel += ` = ${fm.toFixed(2)} fm`;
+    } else {
+      qtyLabel = `${item.quantity} ${UNIT_LABELS[item.unit] ?? item.unit}`;
+    }
+
+    return { item, effectivePrice, effDiscount, lineTotal, listTotal, isM2, qtyLabel };
+  });
+
+  const netListTotal = rows.reduce((s, r) => s + r.listTotal, 0);
+  const netTotal = rows.reduce((s, r) => s + r.lineTotal, 0);
+  const totalDiscount = netListTotal - netTotal;
+  const hasAnyDiscount = totalDiscount > 0.005;
   const vatAmount = quote.vat_type === "normál" ? netTotal * VAT_RATE : 0;
   const grossTotal = netTotal + vatAmount;
 
@@ -204,145 +210,73 @@ export default async function QuotePdfPage({
           <table className="w-full mb-6 text-sm">
             <thead>
               <tr className="border-b-2 border-[#2d3748]">
-                <th className="text-left py-2 font-semibold text-[#2d3748] w-8">
-                  #
-                </th>
-                <th className="text-left py-2 font-semibold text-[#2d3748]">
-                  Megnevezés
-                </th>
-                <th className="text-right py-2 font-semibold text-[#2d3748] w-24">
-                  Menny.
-                </th>
-                <th className="text-right py-2 font-semibold text-[#2d3748] w-28">
-                  Egységár
-                </th>
-                <th className="text-right py-2 font-semibold text-[#2d3748] w-16">
-                  Kedv.
-                </th>
-                <th className="text-right py-2 font-semibold text-[#2d3748] w-28">
-                  Nettó
-                </th>
+                <th className="text-left py-2 font-semibold text-[#2d3748] w-8">#</th>
+                <th className="text-left py-2 font-semibold text-[#2d3748]">Megnevezés</th>
+                <th className="text-right py-2 font-semibold text-[#2d3748] w-36">Mennyiség</th>
+                <th className="text-right py-2 font-semibold text-[#2d3748] w-28">Egységár</th>
+                <th className="text-right py-2 font-semibold text-[#2d3748] w-16">Kedv.</th>
+                <th className="text-right py-2 font-semibold text-[#2d3748] w-28">Nettó</th>
               </tr>
             </thead>
             <tbody>
-              {groups.map((group, gIdx) => {
-                const isM2 = group.unit === "m2" && group.full_width != null;
-                const isFm = group.unit === "fm";
-                const hasPieces = isM2 || isFm;
-                const multiRow = group.rows.length > 1;
-
-                // Total fm across all rows
-                const totalFmAll = hasPieces
-                  ? group.rows.reduce((s, r) =>
-                      s + (r.piece_count != null ? r.piece_count * r.quantity : r.quantity), 0)
-                  : null;
-                const totalM2All = isM2 && totalFmAll != null
-                  ? totalFmAll * group.full_width!
-                  : null;
-
-                const bgClass = gIdx % 2 === 0 ? "bg-white" : "bg-gray-50/50";
-
-                if (!multiRow) {
-                  // Single row — compact display
-                  const row = group.rows[0];
-                  const rowFm = hasPieces && row.piece_count != null
-                    ? row.piece_count * row.quantity : null;
-                  const rowM2 = isM2 && rowFm != null ? rowFm * group.full_width! : null;
-                  return (
-                    <tr key={gIdx} className={bgClass}>
-                      <td className="py-2 pr-2 text-gray-400">{gIdx + 1}</td>
-                      <td className="py-2 pr-4 text-gray-700">{group.label}</td>
-                      <td className="py-2 text-right text-gray-700 whitespace-nowrap">
-                        {hasPieces && row.piece_count != null ? (
-                          <>
-                            {row.piece_count} db × {row.quantity} fm
-                            {rowM2 != null && (
-                              <><br /><span className="text-gray-400 text-xs">= {rowM2.toFixed(2)} m²</span></>
-                            )}
-                            {isFm && rowFm != null && (
-                              <><br /><span className="text-gray-400 text-xs">= {rowFm.toFixed(2)} fm</span></>
-                            )}
-                          </>
-                        ) : (
-                          <>{row.quantity} {UNIT_LABELS[group.unit] ?? group.unit}</>
-                        )}
-                      </td>
-                      <td className="py-2 text-right text-gray-700 whitespace-nowrap">
-                        {formatCurrency(group.unit_price)}/{isM2 ? "m²" : UNIT_LABELS[group.unit] ?? group.unit}
-                      </td>
-                      <td className="py-2 text-right text-gray-500">
-                        {group.eff_discount > 0 ? `${group.eff_discount.toFixed(1)}%` : "—"}
-                      </td>
-                      <td className="py-2 text-right font-semibold text-gray-800 whitespace-nowrap">
-                        {formatCurrency(group.group_total)}
-                      </td>
-                    </tr>
-                  );
-                }
-
-                // Multi-row group
-                return (
-                  <tbody key={gIdx} className={bgClass}>
-                    {/* Header row: product name */}
-                    <tr className={bgClass}>
-                      <td className="pt-2 pb-0.5 pr-2 text-gray-400 align-top">{gIdx + 1}</td>
-                      <td colSpan={5} className="pt-2 pb-0.5 text-gray-800 font-medium">{group.label}</td>
-                    </tr>
-                    {/* Individual quantity rows */}
-                    {group.rows.map((row, rIdx) => {
-                      const rowFm = hasPieces && row.piece_count != null
-                        ? row.piece_count * row.quantity : null;
-                      const rowM2 = isM2 && rowFm != null ? rowFm * group.full_width! : null;
-                      return (
-                        <tr key={rIdx} className={bgClass}>
-                          <td />
-                          <td className="py-0.5 pl-3 text-gray-500 text-sm">
-                            {hasPieces && row.piece_count != null
-                              ? `${row.piece_count} db × ${row.quantity.toFixed(2)} fm`
-                              : `${row.quantity} ${UNIT_LABELS[row.piece_count != null ? "fm" : group.unit] ?? group.unit}`}
-                          </td>
-                          <td className="py-0.5 text-right text-gray-400 text-xs whitespace-nowrap">
-                            {rowM2 != null && `= ${rowM2.toFixed(2)} m²`}
-                            {isFm && rowFm != null && `= ${rowFm.toFixed(2)} fm`}
-                          </td>
-                          <td /><td /><td />
-                        </tr>
-                      );
-                    })}
-                    {/* Summary row */}
-                    <tr className={bgClass}>
-                      <td />
-                      <td />
-                      <td className="pt-0.5 pb-2 text-right text-gray-600 text-xs whitespace-nowrap">
-                        {totalM2All != null
-                          ? `Összesen: ${totalFmAll?.toFixed(2)} fm = ${totalM2All.toFixed(2)} m²`
-                          : totalFmAll != null
-                          ? `Összesen: ${totalFmAll.toFixed(2)} fm`
-                          : null}
-                      </td>
-                      <td className="pt-0.5 pb-2 text-right text-gray-700 whitespace-nowrap text-sm">
-                        {formatCurrency(group.unit_price)}/{isM2 ? "m²" : UNIT_LABELS[group.unit] ?? group.unit}
-                      </td>
-                      <td className="pt-0.5 pb-2 text-right text-gray-500 text-sm">
-                        {group.eff_discount > 0 ? `${group.eff_discount.toFixed(1)}%` : "—"}
-                      </td>
-                      <td className="pt-0.5 pb-2 text-right font-semibold text-gray-800 whitespace-nowrap">
-                        {formatCurrency(group.group_total)}
-                      </td>
-                    </tr>
-                  </tbody>
-                );
-              })}
+              {rows.map(({ item, effectivePrice, effDiscount, lineTotal, isM2, qtyLabel }, idx) => (
+                <tr key={item.id} className={idx % 2 === 0 ? "bg-white" : "bg-gray-50/50"}>
+                  <td className="py-2 pr-2 text-gray-400 align-top">{idx + 1}</td>
+                  <td className="py-2 pr-4 text-gray-700">{getLabel(item)}</td>
+                  <td className="py-2 text-right text-gray-700 whitespace-nowrap align-top">
+                    {qtyLabel}
+                  </td>
+                  <td className="py-2 text-right text-gray-700 whitespace-nowrap align-top">
+                    {effDiscount > 0 ? (
+                      <>
+                        <span className="line-through text-gray-400">
+                          {formatCurrency(effectivePrice)}/{isM2 ? "m²" : UNIT_LABELS[item.unit] ?? item.unit}
+                        </span>
+                        <br />
+                        <span>
+                          {formatCurrency(effectivePrice * (1 - effDiscount / 100))}/{isM2 ? "m²" : UNIT_LABELS[item.unit] ?? item.unit}
+                        </span>
+                      </>
+                    ) : (
+                      <>{formatCurrency(effectivePrice)}/{isM2 ? "m²" : UNIT_LABELS[item.unit] ?? item.unit}</>
+                    )}
+                  </td>
+                  <td className="py-2 text-right text-gray-500 align-top">
+                    {effDiscount > 0 ? `${effDiscount.toFixed(1)}%` : "—"}
+                  </td>
+                  <td className="py-2 text-right font-semibold text-gray-800 whitespace-nowrap align-top">
+                    {formatCurrency(lineTotal)}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
 
           {/* Totals */}
           <div className="flex justify-end mb-8">
             <div className="min-w-[280px] space-y-1.5 text-sm">
-              <div className="flex justify-between border-t pt-2">
-                <span className="text-gray-500">Nettó összesen:</span>
-                <span className="font-semibold">{formatCurrency(netTotal)}</span>
-              </div>
+              {hasAnyDiscount && (
+                <>
+                  <div className="flex justify-between pt-2 text-gray-400">
+                    <span>Nettó összesen (listaáron):</span>
+                    <span>{formatCurrency(netListTotal)}</span>
+                  </div>
+                  <div className="flex justify-between text-green-700 font-medium">
+                    <span>Kedvezmény:</span>
+                    <span>−{formatCurrency(totalDiscount)}</span>
+                  </div>
+                  <div className="flex justify-between border-t pt-2">
+                    <span className="text-gray-500">Nettó fizetendő:</span>
+                    <span className="font-semibold">{formatCurrency(netTotal)}</span>
+                  </div>
+                </>
+              )}
+              {!hasAnyDiscount && (
+                <div className="flex justify-between border-t pt-2">
+                  <span className="text-gray-500">Nettó összesen:</span>
+                  <span className="font-semibold">{formatCurrency(netTotal)}</span>
+                </div>
+              )}
               {quote.vat_type === "fordított" ? (
                 <div className="flex justify-between text-amber-700">
                   <span>ÁFA (fordított adózás):</span>

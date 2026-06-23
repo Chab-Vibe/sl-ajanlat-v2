@@ -34,8 +34,8 @@ BEGIN
     RETURNING id INTO v_mfr;
 
   -- ── Kategória ───────────────────────────────────────────
-  INSERT INTO product_categories (name, unit, sort_order)
-    VALUES ('Cserepeslemez', 'm2', 1)
+  INSERT INTO product_categories (name, unit, sort_order, default_anticondens)
+    VALUES ('Cserepeslemez', 'm2', 1, true)
     RETURNING id INTO v_cat;
 
   -- ── Szín palettók ───────────────────────────────────────

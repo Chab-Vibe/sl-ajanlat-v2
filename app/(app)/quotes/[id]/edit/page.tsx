@@ -61,6 +61,8 @@ export default async function EditQuotePage({
     discount_percent: number;
     color_code: string | null;
     sort_order: number;
+    with_anticondens: boolean;
+    anticondens_price: number;
   };
 
   const rawItems = ((quote.items ?? []) as RawItem[])
@@ -75,22 +77,28 @@ export default async function EditQuotePage({
       (row.product_id ?? "") === last.product_id &&
       (row.variant_id ?? "") === last.variant_id &&
       (row.color_code ?? null) === last.color_code &&
-      row.unit === last.unit;
+      row.unit === last.unit &&
+      (row.anticondens_price ?? 0) === last.anticondens_price;
     if (sameProduct) {
-      last.quantity_rows.push({ piece_count: row.piece_count ?? null, quantity: row.quantity });
+      last.quantity_rows.push({
+        piece_count: row.piece_count ?? null,
+        quantity: row.quantity,
+        with_anticondens: row.with_anticondens ?? false,
+      });
     } else {
       groupedItems.push({
         id: row.id,
         product_id: row.product_id ?? "",
         variant_id: row.variant_id ?? "",
         custom_description: row.custom_description ?? "",
-        quantity_rows: [{ piece_count: row.piece_count ?? null, quantity: row.quantity }],
+        quantity_rows: [{ piece_count: row.piece_count ?? null, quantity: row.quantity, with_anticondens: row.with_anticondens ?? false }],
         unit: row.unit,
         unit_price_base: row.unit_price_base,
         unit_price_override: row.unit_price_override,
         discount_percent: row.discount_percent,
         color_code: row.color_code ?? null,
         sort_order: row.sort_order,
+        anticondens_price: row.anticondens_price ?? 0,
       });
     }
   }

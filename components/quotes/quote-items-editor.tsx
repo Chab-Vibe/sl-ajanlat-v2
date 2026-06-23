@@ -50,19 +50,24 @@ const DEFAULT_SEL: SelState = {
 let nextId = 1;
 function makeId() { return `new-${nextId++}`; }
 
-function blankItem(unit = "m2"): QuoteItemFormData {
+function blankRow(withAnticondens = false): QuoteItemQuantityRow {
+  return { piece_count: null, quantity: 1, with_anticondens: withAnticondens };
+}
+
+function blankItem(unit = "m2", anticondensPrice = 0, defaultAnticondens = false): QuoteItemFormData {
   return {
     id: makeId(),
     product_id: "",
     variant_id: "",
     custom_description: "",
-    quantity_rows: [{ piece_count: null, quantity: 1 }],
+    quantity_rows: [blankRow(defaultAnticondens)],
     unit,
     unit_price_base: 0,
     unit_price_override: null,
     discount_percent: 0,
     color_code: null,
     sort_order: 0,
+    anticondens_price: anticondensPrice,
   };
 }
 
@@ -139,9 +144,10 @@ export function QuoteItemsEditor({
 
   // ---- Quantity row management ----
   function addRow(itemId: string) {
-    updateItem(itemId, {
-      quantity_rows: [...(items.find((i) => i.id === itemId)?.quantity_rows ?? []), blankRow()],
-    });
+    const item = items.find((i) => i.id === itemId);
+    if (!item) return;
+    const defaultAC = item.anticondens_price > 0;
+    updateItem(itemId, { quantity_rows: [...item.quantity_rows, blankRow(defaultAC)] });
   }
   function updateRow(itemId: string, rowIdx: number, patch: Partial<QuoteItemQuantityRow>) {
     const item = items.find((i) => i.id === itemId);
@@ -191,26 +197,36 @@ export function QuoteItemsEditor({
   }
 
   // ---- Cascade event handlers ----
-  function resetRows(): QuoteItemQuantityRow[] { return [blankRow()]; }
+  function resetRows(withAnticondens = false): QuoteItemQuantityRow[] {
+    return [blankRow(withAnticondens)];
+  }
+  function itemAnticondensDefault(itemId: string): boolean {
+    return (items.find((i) => i.id === itemId)?.anticondens_price ?? 0) > 0;
+  }
 
   function onCatChange(itemId: string, catId: string) {
     const cat = categoryMap.get(catId);
+    const defaultAC = cat?.default_anticondens ?? false;
+    const acPrice = defaultAC ? 800 : 0;
     setSel(itemId, { catId, mfrId: "", baseName: "", thickness: "" });
     updateItem(itemId, {
       product_id: "", variant_id: "", unit: cat?.unit ?? "m2",
       unit_price_base: 0, unit_price_override: null,
-      quantity_rows: resetRows(), color_code: null,
+      quantity_rows: resetRows(defaultAC), color_code: null,
+      anticondens_price: acPrice,
     });
   }
   function onMfrChange(itemId: string, mfrId: string) {
+    const ac = itemAnticondensDefault(itemId);
     setSel(itemId, { mfrId, baseName: "", thickness: "" });
     updateItem(itemId, {
       product_id: "", variant_id: "", unit_price_base: 0,
-      unit_price_override: null, quantity_rows: resetRows(), color_code: null,
+      unit_price_override: null, quantity_rows: resetRows(ac), color_code: null,
     });
   }
   function onBaseNameChange(itemId: string, baseName: string) {
     const sel = getSel(itemId);
+    const ac = itemAnticondensDefault(itemId);
     const thicknesses = getThicknesses(sel.catId, sel.mfrId, baseName);
     const autoThickness = thicknesses.length === 1 ? thicknesses[0] : "";
     setSel(itemId, { baseName, thickness: autoThickness });
@@ -220,24 +236,25 @@ export function QuoteItemsEditor({
       updateItem(itemId, {
         product_id: prod?.id ?? "", variant_id: "",
         unit: cat?.unit ?? "m2", unit_price_base: 0,
-        unit_price_override: null, quantity_rows: resetRows(), color_code: null,
+        unit_price_override: null, quantity_rows: resetRows(ac), color_code: null,
       });
     } else {
       updateItem(itemId, {
         product_id: "", variant_id: "", unit_price_base: 0,
-        unit_price_override: null, quantity_rows: resetRows(), color_code: null,
+        unit_price_override: null, quantity_rows: resetRows(ac), color_code: null,
       });
     }
   }
   function onThicknessChange(itemId: string, thickness: string) {
     const sel = getSel(itemId);
+    const ac = itemAnticondensDefault(itemId);
     setSel(itemId, { thickness });
     const prod = getFinalProduct(sel.catId, sel.mfrId, sel.baseName, thickness);
     const cat = prod ? categoryMap.get(prod.category_id) : null;
     updateItem(itemId, {
       product_id: prod?.id ?? "", variant_id: "",
       unit: cat?.unit ?? "m2", unit_price_base: 0,
-      unit_price_override: null, quantity_rows: resetRows(), color_code: null,
+      unit_price_override: null, quantity_rows: resetRows(ac), color_code: null,
     });
   }
   function onVariantChange(itemId: string, variantId: string) {
@@ -253,12 +270,12 @@ export function QuoteItemsEditor({
   const grandTotal = useMemo(
     () => items.reduce((sum, item) => {
       const product = item.product_id ? productMap.get(item.product_id) : null;
-      const effectivePrice = item.unit_price_override ?? item.unit_price_base;
+      const basePrice = item.unit_price_override ?? item.unit_price_base;
       const effDiscount = calcEffectiveDiscount(item.discount_percent, globalDiscount);
-      return sum + item.quantity_rows.reduce((rSum, row) =>
-        rSum + calcLineTotal(row.quantity, product?.full_width ?? null, effectivePrice, effDiscount, item.unit, row.piece_count),
-        0
-      );
+      return sum + item.quantity_rows.reduce((rSum, row) => {
+        const rowPrice = basePrice + (row.with_anticondens ? item.anticondens_price : 0);
+        return rSum + calcLineTotal(row.quantity, product?.full_width ?? null, rowPrice, effDiscount, item.unit, row.piece_count);
+      }, 0);
     }, 0),
     [items, globalDiscount, productMap]
   );
@@ -300,8 +317,9 @@ export function QuoteItemsEditor({
               ? getPaletteColors(selectedVariant!.palette_id!)
               : [];
 
-            const effectivePrice = item.unit_price_override ?? item.unit_price_base;
+            const basePrice = item.unit_price_override ?? item.unit_price_base;
             const effDiscount = calcEffectiveDiscount(item.discount_percent, globalDiscount);
+            const isAnticondensActive = isM2 && item.anticondens_price > 0;
 
             // Group totals
             const totalFmAll = hasPieces
@@ -311,10 +329,10 @@ export function QuoteItemsEditor({
             const totalM2All = isM2 && totalFmAll != null && product?.full_width
               ? totalFmAll * product.full_width
               : null;
-            const blockTotal = item.quantity_rows.reduce(
-              (s, row) => s + calcLineTotal(row.quantity, product?.full_width ?? null, effectivePrice, effDiscount, item.unit, row.piece_count),
-              0
-            );
+            const blockTotal = item.quantity_rows.reduce((s, row) => {
+              const rowPrice = basePrice + (row.with_anticondens ? item.anticondens_price : 0);
+              return s + calcLineTotal(row.quantity, product?.full_width ?? null, rowPrice, effDiscount, item.unit, row.piece_count);
+            }, 0);
 
             const isCustom = sel.isCustomMode;
 
@@ -469,6 +487,41 @@ export function QuoteItemsEditor({
                     </div>
                   )}
 
+                  {/* Antikondenzációs filc – csak m2 tételeknél */}
+                  {isM2 && !isCustom && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border border-input accent-primary"
+                          checked={isAnticondensActive}
+                          onChange={(e) => {
+                            const acPrice = e.target.checked ? 800 : 0;
+                            updateItem(itemId, {
+                              anticondens_price: acPrice,
+                              quantity_rows: item.quantity_rows.map((r) => ({
+                                ...r,
+                                with_anticondens: e.target.checked,
+                              })),
+                            });
+                          }}
+                        />
+                        <span className="text-xs">Antikondenzációs filc</span>
+                      </label>
+                      {isAnticondensActive && (
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number" min={0} step={10}
+                            className="h-7 text-xs w-20"
+                            value={item.anticondens_price}
+                            onChange={(e) => updateItem(itemId, { anticondens_price: parseFloat(e.target.value) || 0 })}
+                          />
+                          <span className="text-xs text-muted-foreground">Ft/m²</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <Separator />
 
                   {/* ---- Quantity rows ---- */}
@@ -476,12 +529,15 @@ export function QuoteItemsEditor({
                     {/* Column headers */}
                     <div className={cn(
                       "grid gap-2 text-xs text-muted-foreground px-1",
-                      hasPieces ? "grid-cols-[1fr_1fr_auto]" : "grid-cols-[1fr_auto]"
+                      hasPieces
+                        ? isAnticondensActive ? "grid-cols-[1fr_1fr_auto_auto]" : "grid-cols-[1fr_1fr_auto]"
+                        : "grid-cols-[1fr_auto]"
                     )}>
                       {hasPieces ? (
                         <>
                           <span>Darabszám (db)</span>
                           <span>{isM2 ? "Hossz / lemez (fm)" : "Hossz (fm)"}</span>
+                          {isAnticondensActive && <span className="text-center">Filc</span>}
                           <span className="w-6" />
                         </>
                       ) : (
@@ -505,7 +561,9 @@ export function QuoteItemsEditor({
                           key={rowIdx}
                           className={cn(
                             "grid gap-2 items-center",
-                            isM2 ? "grid-cols-[1fr_1fr_auto]" : "grid-cols-[1fr_auto]"
+                            hasPieces
+                              ? isAnticondensActive ? "grid-cols-[1fr_1fr_auto_auto]" : "grid-cols-[1fr_1fr_auto]"
+                              : "grid-cols-[1fr_auto]"
                           )}
                         >
                           {hasPieces ? (
@@ -537,6 +595,17 @@ export function QuoteItemsEditor({
                                   </p>
                                 )}
                               </div>
+                              {isAnticondensActive && (
+                                <div className="flex justify-center">
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4 rounded border border-input accent-primary"
+                                    checked={row.with_anticondens}
+                                    onChange={(e) => updateRow(itemId, rowIdx, { with_anticondens: e.target.checked })}
+                                    title="Antikondenzációs filc ennél a sornál"
+                                  />
+                                </div>
+                              )}
                             </>
                           ) : (
                             <Input
@@ -577,7 +646,7 @@ export function QuoteItemsEditor({
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 items-start">
                     <div className="space-y-1">
                       <Label className="text-xs">
-                        Egységár (Ft/{isM2 ? "m²" : catUnit})
+                        Lemez ár (Ft/{isM2 ? "m²" : catUnit})
                         {item.unit_price_override !== null && (
                           <span className="ml-1 text-amber-600">↑</span>
                         )}
@@ -601,6 +670,11 @@ export function QuoteItemsEditor({
                         >
                           Visszaáll. ({formatCurrency(item.unit_price_base)})
                         </button>
+                      )}
+                      {isAnticondensActive && (
+                        <p className="text-xs text-muted-foreground">
+                          + {formatCurrency(item.anticondens_price)}/m² filc (soronként)
+                        </p>
                       )}
                     </div>
 

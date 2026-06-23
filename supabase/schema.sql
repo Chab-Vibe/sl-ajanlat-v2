@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS public.product_categories (
   name TEXT NOT NULL,
   unit TEXT NOT NULL DEFAULT 'm2' CHECK (unit IN ('m2', 'fm', 'db')),
   sort_order INT NOT NULL DEFAULT 0,
+  default_anticondens BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -177,6 +178,8 @@ CREATE TABLE IF NOT EXISTS public.quote_items (
   unit_price_override NUMERIC(12,2) NULL,
   discount_percent NUMERIC(5,2) NOT NULL DEFAULT 0,
   color_code TEXT NULL,
+  with_anticondens BOOLEAN NOT NULL DEFAULT false,
+  anticondens_price NUMERIC(10,2) NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
