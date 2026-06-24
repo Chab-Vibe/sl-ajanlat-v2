@@ -84,9 +84,6 @@ function initSel(item: QuoteItemFormData, products: Product[]): SelState {
   };
 }
 
-function blankRow(): QuoteItemQuantityRow {
-  return { piece_count: null, quantity: 1 };
-}
 
 export function QuoteItemsEditor({
   items,
